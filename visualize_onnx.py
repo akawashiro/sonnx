@@ -26,7 +26,10 @@ def main():
         t = numpy_helper.to_array(i)
         # new_tensor = onnx.TensorProto()
         print(type(i))
-        print(t)
+        print(type(t))
+        # print(t.flatten())
+        for x in t.flatten():
+            print(x)
 
     # モデル（グラフ）を構成するノードを全て出力する
     # print("====== Nodes ======")
