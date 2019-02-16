@@ -1,4 +1,5 @@
 import onnx
+import matplotlib.pyplot as plt
 from onnx import helper, shape_inference
 from onnx import TensorProto
 from onnx import numpy_helper
@@ -15,7 +16,7 @@ def main():
     print(model.ir_version)
     print(model.model_version)
     print(model.producer_version)
-    for i in model.graph.initializer:
+    for number, i in enumerate(model.graph.initializer):
         # print(i.data_type)
         print(i.dims)
         # print(i.float_data)
@@ -28,8 +29,15 @@ def main():
         print(type(i))
         print(type(t))
         # print(t.flatten())
-        for x in t.flatten():
-            print(x)
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1)
+        ax.hist(t.flatten(), bins=200)
+        plt.savefig(str(number) + '-' + str(len(t.flatten())) + '-figure.png')
+
+        print(i.data_type)
+
+        # for x in t.flatten():
+        #     print(x)
 
     # モデル（グラフ）を構成するノードを全て出力する
     # print("====== Nodes ======")
