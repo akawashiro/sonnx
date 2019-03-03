@@ -243,7 +243,11 @@ int main(){
 
     int n = mnist.answer.size(); 
     cout << "compress_ratio, accuracy" << endl;
-    for(int r = 0; r <= 100; r+=5){
+    for(int r = 0; r < 80; r+=5){
+        double ac = compressed_graph_accuracy(mnist, n, (double)r/100.0);
+        cout << setprecision(10) << (double)r/100.0 << ", " << ac << endl;
+    }
+    for(int r = 80; r <= 100; r+=1){
         double ac = compressed_graph_accuracy(mnist, n, (double)r/100.0);
         cout << setprecision(10) << (double)r/100.0 << ", " << ac << endl;
     }
