@@ -1,2 +1,5 @@
 myenv/
 a.out
+result/
+mnist_test.txt
+mnist_train.txt
