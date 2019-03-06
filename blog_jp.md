@@ -28,12 +28,12 @@
 
 このようになっています。
 <img src="https://raw.githubusercontent.com/akawashiro/sonnx/master/140406443536680_figure.png" width=400px>
-重みが0の部分が非常に多いです。重みが0の枝は削除してしまっても結果に全く影響しないはずです。また、グラフが左右対称になっているので、絶対値の小さい順に削除していけば各パーセプトロンへの入力はそれほど変化しない気がします。
+一見してわかるように、重みが0の部分が非常に多いです。まず、学習済みモデルから重みが0の枝を削除しても推論結果に影響しないはずです。また、グラフが左右対称になっているので、絶対値の小さい順に削除していけば、各パーセプトロンへの入力はそれほど変化しない気がします。
 
 ## 手法
 やることは非常に単純です。ニューラルネットワーク中の各層間枝の重みの統計を取り、重み上位何%かを残して残りは削除するだけです。
 
-しかし、巷のディープラーニングフレームワークはおそらくこのような処理を行うことができません。そこで、何らかの方法で学習済みのモデルから枝の重みのデータを取り出し、辺をカットし、さらに加工後のモデルのデータを実行できるようにする必要があります。
+しかし、巷のディープラーニングフレームワークはこのような処理を行うことができません。そこで、何らかの方法で学習済みのモデルから枝の重みのデータを取り出し、辺をカットし、さらに加工後のモデルのデータを使って推論できるようにする必要があります。
 
 幸い今はONNXという良いものがあります。ONNXとは学習済みモデルのデータを出力する形式の一つで、多くのフレームワークが対応しています。
 
@@ -44,12 +44,21 @@
 2. 学習済みのニューラルネットワークからONNXデータを出力する
 3. ONNXデータを俺俺ONNXランタイムに読み込んで加工、実行する
 
+となります。一つづつ何をやるのかを説明します。
+
 #### 1. Chainerでニューラルネットワークを書いて学習する
 #### 2. 学習済みのニューラルネットワークからONNXデータを出力する
-#### 3. ONNXデータを俺俺ONNXランタイムに読み込んで加工、実行する
-<img src="https://raw.githubusercontent.com/akawashiro/sonnx/master/mnist.png" width=250px>
+1と2は簡単です。[onnx-chainer](https://github.com/chainer/onnx-chainer)を使えばすぐにできます。[このソースコード](https://github.com/akawashiro/sonnx/blob/master/learn_mnist.py)を`python3 learn_mnist.py`で実行すると`mnist.onnx`というファイルができます。
 
-という流れになります。
+#### 3. ONNXデータを俺俺ONNXランタイムに読み込んで加工、実行する
+ここが大変でした。ONNXモデルの出力は多くの人が試しているのですが、出力したONNXモデルをチューニングしようとする人はほとんどいないようです。
+##### 3.1 ONNXデータを解析する
+とりあえず[netron](https://github.com/lutzroeder/netron)というONNXの可視化ツールで`mnist.onnx`を可視化してみました。
+<img src="https://raw.githubusercontent.com/akawashiro/sonnx/master/mnist.png" width=250px>
+`Gemm`はGeneral matrix multiplyの略です。各Gemmノードは行列`B`とベクトル`C`を持ち、ベクトル`x`を入力として`Bx+C`を出力します。`Relu`は[活性化関数](https://ja.wikipedia.org/wiki/%E6%B4%BB%E6%80%A7%E5%8C%96%E9%96%A2%E6%95%B0)です。
+
+Reluは`max(0,x)`で定義されているので、各Gemmノードの行列`B`とベクトル`C`の情報を抽出できれば良さそうです。
+
 ## 結果
 <img src="https://raw.githubusercontent.com/akawashiro/sonnx/master/sonnx_result.png" width=500px>
 ## 考察
