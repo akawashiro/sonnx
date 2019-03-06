@@ -48,19 +48,51 @@
 
 #### 1. Chainerでニューラルネットワークを書いて学習する
 #### 2. 学習済みのニューラルネットワークからONNXデータを出力する
-1と2は簡単です。[onnx-chainer](https://github.com/chainer/onnx-chainer)を使えばすぐにできます。[このソースコード](https://github.com/akawashiro/sonnx/blob/master/learn_mnist.py)を`python3 learn_mnist.py`で実行すると`mnist.onnx`というファイルができます。
+1と2は簡単です。[onnx-chainer](https://github.com/chainer/onnx-chainer)を使えばすぐにできます。
+```
+python3 learn_mnist.py
+```
+で`mnist.onnx`というファイルができます。
 
 #### 3. ONNXデータを俺俺ONNXランタイムに読み込んで加工、実行する
-ここが大変でした。ONNXモデルの出力は多くの人が試しているのですが、出力したONNXモデルをチューニングしようとする人はほとんどいないようです。
+ここが大変でした。ディープラーニングフレームワークからのONNXモデルの出力は多くの人が試しているのですが、出力したONNXモデルをチューニングしようとする人はほとんどいないようです。
 ##### 3.1 ONNXデータを解析する
 とりあえず[netron](https://github.com/lutzroeder/netron)というONNXの可視化ツールで`mnist.onnx`を可視化してみました。
 <img src="https://raw.githubusercontent.com/akawashiro/sonnx/master/mnist.png" width=250px>
 `Gemm`はGeneral matrix multiplyの略です。各Gemmノードは行列`B`とベクトル`C`を持ち、ベクトル`x`を入力として`Bx+C`を出力します。`Relu`は[活性化関数](https://ja.wikipedia.org/wiki/%E6%B4%BB%E6%80%A7%E5%8C%96%E9%96%A2%E6%95%B0)です。
 
-Reluは`max(0,x)`で定義されているので、各Gemmノードの行列`B`とベクトル`C`の情報を抽出できれば良さそうです。
+Reluは`max(0,x)`で定義されている関数のでONNXから抽出する必要は無く、各Gemmノードの行列`B`とベクトル`C`の情報だけをを抽出できれば良いです。
 
+今回は各Gemmノードの`B`と`C`をテキストファイルとして抽出します。
+```
+> python3 analyze_mnist_onnx.py
+```
+で`mnist.onnx`の全てのGemmノードの`B`と`C`がテキストファイルに保存されます。ファイル名は`*************_matrix.txt`です。保存した各テキストファイルがどのGemmノードに対応するのかは`mnist.onnx.json`を睨むとわかります(←ここ超不親切)。`mnist.onnx.json`は`analyze_mnist_onnx.py`が生成してくれます。
+
+また`analyze_mnist_onnx.py`はMNISTの画像データもテキストファイルとして保存します。このファイル名は`mnist_test.txt`、`mnist_train.txt`です。
+
+##### 3.2 抽出したデータを加工、実行する
+```
+g++ -O3 sonnx.cpp && ./a.out
+```
+で出力した重みのデータを読み込み、推論を実行します。`sonnx.cpp`は簡単なONNXランタイムになっており、`mnist.onnx`から抽出した行列のデータとMNISTの画像データのテキストファイルから推論を行います。
+
+出力はこのようになります。
+```
+accuracy, time
+0.9817000031, 15.93887043
+compress_ratio, accuracy, time
+0, 0.9817000031, 36.66616821
+0.05, 0.9817000031, 34.61940384
+0.1, 0.9818000197, 32.64707184
+0.15, 0.9818000197, 30.78090286
+0.2, 0.9817000031, 29.01914406
+..........................
+```
+2行目は読み込んだデータを無加工で用いたときの推論の精度と時間、4行目以降は読み込んだデータを加工したときの推論の圧縮率、精度と時間です。圧縮率(compress_ratio)が0のときは全く加工しないのと同じ、圧縮率が0.3のときは辺の重みの絶対値が小さい30%を削除したときの結果です。圧縮率が1になると全ての辺が削除されます。
 ## 結果
 <img src="https://raw.githubusercontent.com/akawashiro/sonnx/master/sonnx_result.png" width=500px>
-## 考察
+<img src="https://raw.githubusercontent.com/akawashiro/sonnx/master/compression_rate_time.png" width=500px>
+## 考察　
 ## おまけ
 - numpyには勝てなかったよ...

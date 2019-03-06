@@ -69,23 +69,11 @@ CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_n
 
 vector<float> CompressedGemm::calc(const vector<float> &x){
     vector<float> ret = C;
-    // int n = B.size();
-    // int m = B[0].size();
-    // for(int i=0; i < n; i++){
-    //     for(int j=0; j< m;j++){
-    //         ret[i] += B[i][j] * x[j];
-    //     }
-    // }
 
     int n = B_scale.size();
-    for(int i=0;i+3<n;i+=4){
+    for(int i=0;i<n;i++){
         ret[B_row[i]] += B_scale[i] * x[B_column[i]];
-        ret[B_row[i+1]] += B_scale[i+1] * x[B_column[i+1]];
-        ret[B_row[i+2]] += B_scale[i+2] * x[B_column[i+2]];
-        ret[B_row[i+3]] += B_scale[i+3] * x[B_column[i+3]];
-    }
-    for(int i=n/4*4;i<n;i++){
-        ret[B_row[i]] += B_scale[i] * x[B_column[i]];
+
     }
     return ret;
 }
@@ -279,8 +267,6 @@ int main(){
     MNIST mnist("mnist_test.txt");
 
     int n = mnist.answer.size(); 
-    cout << "n = " << n << endl;
-
     {
         cout << "accuracy, time" << endl;
         auto res = original_graph_accuracy(mnist, n);
