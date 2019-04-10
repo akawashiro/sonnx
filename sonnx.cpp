@@ -6,7 +6,10 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <numeric>
 #include <algorithm>
+#include "Eigen/Core"
+#include "Eigen/Sparse"
 
 using namespace std;
 
@@ -24,9 +27,8 @@ class CompressedGemm : Node{
     private:
         std::vector<std::vector<float> > B;
         std::vector<float> C;
-        vector<float> B_scale;
-        vector<int> B_row;
-        vector<int> B_column;
+        Eigen::SparseMatrix<float> B_matrix;
+        Eigen::VectorXf C_vector;
 };
 
 CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_name, const float compress_ratio = CompressedGemm::DEFAULT_COMPRESS_RATIO){
@@ -44,19 +46,20 @@ CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_n
         this->B.push_back(vd);
     }
 
+    vector<Eigen::Triplet<float>> tripletVec;
     sort(as.begin(), as.end());
     float th = as[(int)(as.size() * compress_ratio)];
-    for(int i=0; i < B.size(); i++){
-        for(int j=0;j < B[i].size(); j++){
+    for(int i=0; i < (int)B.size(); i++){
+        for(int j=0;j < (int)B[i].size(); j++){
             if(abs(B[i][j]) < th){
                 B[i][j] = 0;
             }else{
-                B_scale.push_back(B[i][j]);
-                B_row.push_back(i);
-                B_column.push_back(j);
+                tripletVec.push_back(Eigen::Triplet<float>(i,j,B[i][j]));
             }
         }
     }
+    B_matrix = Eigen::SparseMatrix<float>(B.size(), B[0].size());
+    B_matrix.setFromTriplets(tripletVec.begin(), tripletVec.end());
 
     ifstream cf(c_name);
     float d;
@@ -65,16 +68,22 @@ CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_n
         vd.push_back(d);
     }
     this->C = vd;
+    Eigen::VectorXf v(vd.size());
+    for(int i=0;i<(int)vd.size();i++){
+        v[i] = vd[i];
+    }
+    C_vector = v;
 }
 
 vector<float> CompressedGemm::calc(const vector<float> &x){
-    vector<float> ret = C;
+    vector<float> ret(C_vector.size());
 
-    int n = B_scale.size();
-    for(int i=0;i<n;i++){
-        ret[B_row[i]] += B_scale[i] * x[B_column[i]];
-
-    }
+    Eigen::VectorXf v(x.size());
+    for(int i=0;i<(int)x.size();i++)
+        v[i] = x[i];
+    auto r = B_matrix * v + C_vector;
+    for(int i=0;i<C_vector.size();i++)
+        ret[i] = r[i];
     return ret;
 }
 
@@ -94,6 +103,8 @@ class Gemm : Node{
     private:
         std::vector<std::vector<float> > B;
         std::vector<float> C;
+        Eigen::MatrixXf B_matrix;
+        Eigen::VectorXf C_vector;
 };
 
 Gemm::Gemm(const std::string &b_name, const std::string &c_name){
@@ -108,6 +119,14 @@ Gemm::Gemm(const std::string &b_name, const std::string &c_name){
         }
         this->B.push_back(vd);
     }
+    // auto m = Eigen::MatrixXf::Zero(B.size(), B[0].size());
+    // for(int i=0;i<B.size();i++){
+    //     for(int j=0;j<B[0].size();j++){
+    //         m[i][j] = B[i][j];
+    //     }
+    // }
+    // B_matrix = m;
+
     ifstream cf(c_name);
     float d;
     vector<float> vd;
@@ -115,6 +134,11 @@ Gemm::Gemm(const std::string &b_name, const std::string &c_name){
         vd.push_back(d);
     }
     this->C = vd;
+    Eigen::VectorXf v(vd.size());
+    for(int i=0;i<(int)vd.size();i++){
+        v[i] = vd[i];
+    }
+    C_vector = v;
 }
 
 vector<float> Gemm::calc(const vector<float> &x){
@@ -205,12 +229,14 @@ const void show_vector(const vector<T> &v){
 
 class Result{
     public:
-        Result(double t, double a){
+        Result(double t, double a, vector<double> d){
             time = t;
             accuracy = a;
+            distribution = d;
         }
         double time;
         double accuracy;
+        vector<double> distribution;
 };
 
 Result original_graph_accuracy(MNIST &mnist, const int ntest){
@@ -221,6 +247,7 @@ Result original_graph_accuracy(MNIST &mnist, const int ntest){
 
     auto start = std::chrono::system_clock::now();
     vector<int> o;
+    vector<double> prob(10, 0.0);
     for(int i=0;i<ntest ;i++){
         vector<float> x = mnist.input[i];
         x = g1.calc(x);
@@ -230,12 +257,19 @@ Result original_graph_accuracy(MNIST &mnist, const int ntest){
         x = g3.calc(x);
         int a = distance(x.begin(), max_element(x.begin(), x.end()));
         o.push_back(a);
+        prob[a]++;
+    }
+    {
+        double s = std::accumulate(prob.begin(), prob.end(), 0.0);
+        for(auto &d: prob){
+            d /= s;
+        }
     }
     auto end = std::chrono::system_clock::now();
     std::chrono::duration<float> elapsed_seconds = end-start;
     float ac = mnist.accuracy(o);
     float time = elapsed_seconds.count();
-    return Result(time, ac);
+    return Result(time, ac, prob) ;
 }
 
 Result compressed_graph_accuracy(MNIST &mnist, const int ntest, float compress_ratio){
@@ -243,9 +277,11 @@ Result compressed_graph_accuracy(MNIST &mnist, const int ntest, float compress_r
     CompressedGemm g2("140406443536680_matrix.txt", "140406443536904_matrix.txt", compress_ratio);
     CompressedGemm g3("140406443537240_matrix.txt", "140406443537464_matrix.txt", compress_ratio);
     Relu r;
+    // std::cout << "Construction finished." << endl;
 
     auto start = std::chrono::system_clock::now();
     vector<int> o;
+    vector<double> prob(10, 0.0);
     for(int i=0;i<ntest ;i++){
         vector<float> x = mnist.input[i];
         x = g1.calc(x);
@@ -255,32 +291,53 @@ Result compressed_graph_accuracy(MNIST &mnist, const int ntest, float compress_r
         x = g3.calc(x);
         int a = distance(x.begin(), max_element(x.begin(), x.end()));
         o.push_back(a);
+        prob[a]++;
+    }
+    {
+        double s = std::accumulate(prob.begin(), prob.end(), 0.0);
+        for(auto &d: prob){
+            d /= s;
+        }
     }
     auto end = std::chrono::system_clock::now();
     std::chrono::duration<float> elapsed_seconds = end-start;
     float ac = mnist.accuracy(o);
     float time = elapsed_seconds.count();
-    return Result(time, ac);
+    return Result(time, ac, prob);
 }
 
 int main(){
+    std::cout << Eigen::SimdInstructionSetsInUse() << std::endl;
     MNIST mnist("mnist_test.txt");
-
+    
     int n = mnist.answer.size(); 
+    n = 100;
     {
         cout << "accuracy, time" << endl;
         auto res = original_graph_accuracy(mnist, n);
         cout << setprecision(10) << res.accuracy << ", " << res.time << endl;
     }
-
-    cout << "compress_ratio, accuracy, time" << endl;
+    
+    cout << "accuracy, time";
+    for(int i=0;i<10;i++){
+        cout << ", probability-of-" << i;
+    }
+    cout << endl;
     for(int r = 0; r < 80; r+=5){
         auto res = compressed_graph_accuracy(mnist, n, (float)r/100.0);
-        cout << setprecision(10) << (float)r/100.0 << ", " << res.accuracy << ", " << res.time << endl;
+        cout << setprecision(10) << (float)r/100.0 << ", " << res.accuracy << ", " << res.time;
+        for(const auto d: res.distribution){
+            cout << ", " << setprecision(10) << d;
+        }
+        cout << endl;
     }
     for(int r = 80; r <= 100; r+=1){
         auto res = compressed_graph_accuracy(mnist, n, (float)r/100.0);
-        cout << setprecision(10) << (float)r/100.0 << ", " << res.accuracy << ", " << res.time << endl;
+        cout << setprecision(10) << (float)r/100.0 << ", " << res.accuracy << ", " << res.time;
+        for(const auto d: res.distribution){
+            cout << ", " << setprecision(10) << d;
+        }
+        cout << endl;
     }
     return 0;
 }
