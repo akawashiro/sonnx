@@ -1,5 +1,6 @@
 #include <vector>
 #include <iomanip>
+#include <thread>
 #include <chrono>
 #include <string>
 #include <cmath>
@@ -18,15 +19,21 @@ class Node{
 class CompressedGemm : Node{
     public:
         CompressedGemm(const std::string &b_name, const std::string &c_name, const float compress_ratio);
+        void calc_partially(const int index, const vector<float> &x);
         std::vector<float> calc(const std::vector<float> &x);
         void show();
         constexpr static const float DEFAULT_COMPRESS_RATIO = 0.8;
     private:
+        int n_thread = 4;
         std::vector<std::vector<float> > B;
         std::vector<float> C;
+        std::vector<float> ret;
         vector<float> B_scale;
         vector<int> B_row;
         vector<int> B_column;
+        vector<vector<float>> B_scale_threads;
+        vector<vector<int>> B_row_threads;
+        vector<vector<int>> B_column_threads;
 };
 
 CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_name, const float compress_ratio = CompressedGemm::DEFAULT_COMPRESS_RATIO){
@@ -58,6 +65,29 @@ CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_n
         }
     }
 
+    // Devide the matrix B to use in threads
+    // int row_size = B.size();
+    // int column_size = B[0].size();
+    int cur=0;
+    B_row_threads = vector<vector<int>>(n_thread, vector<int>());
+    B_column_threads = vector<vector<int>>(n_thread, vector<int>());
+    B_scale_threads = vector<vector<float>>(n_thread, vector<float>());
+    for(int i=0;i<n_thread;i++){
+        while(1){
+            if(cur==B_row.size() || 
+                    (B_row_threads[i].size() > B_row.size()/n_thread &&
+                     B_row_threads[i].back() != B_row[cur]))
+                break;
+            B_row_threads[i].push_back(B_row[cur]);
+            B_column_threads[i].push_back(B_column[cur]);
+            B_scale_threads[i].push_back(B_scale[cur]);
+            cur++;
+        }
+        // cout << B_row_threads[i].size() << endl;
+    }
+    // cout << "row_size = " << B_row.size() <<endl; 
+    // << " column_size = " << column_size << endl;
+
     ifstream cf(c_name);
     float d;
     vector<float> vd;
@@ -67,14 +97,27 @@ CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_n
     this->C = vd;
 }
 
-vector<float> CompressedGemm::calc(const vector<float> &x){
-    vector<float> ret = C;
-
-    int n = B_scale.size();
+void CompressedGemm::calc_partially(const int index, const vector<float> &x){
+    int n = B_scale_threads[index].size();
     for(int i=0;i<n;i++){
-        ret[B_row[i]] += B_scale[i] * x[B_column[i]];
-
+        ret[B_row_threads[index][i]] += B_scale_threads[index][i] * x[B_column_threads[index][i]];
     }
+}
+
+vector<float> CompressedGemm::calc(const vector<float> &x){
+    ret = C;
+    vector<thread> ths;
+    
+    for(int i=0;i<n_thread;i++){
+        ths.push_back(thread(&CompressedGemm::calc_partially, this, i, x));
+    }
+    for(int i=0;i<n_thread;i++){
+        ths[i].join();
+    }
+    // int n = B_scale.size();
+    // for(int i=0;i<n;i++){
+    //     ret[B_row[i]] += B_scale[i] * x[B_column[i]];
+    // }
     return ret;
 }
 
@@ -267,17 +310,17 @@ int main(){
     MNIST mnist("mnist_test.txt");
 
     int n = mnist.answer.size(); 
-    {
-        cout << "accuracy, time" << endl;
-        auto res = original_graph_accuracy(mnist, n);
-        cout << setprecision(10) << res.accuracy << ", " << res.time << endl;
-    }
+    // {
+    //     cout << "accuracy, time" << endl;
+    //     auto res = original_graph_accuracy(mnist, n);
+    //     cout << setprecision(10) << res.accuracy << ", " << res.time << endl;
+    // }
 
     cout << "compress_ratio, accuracy, time" << endl;
-    for(int r = 0; r < 80; r+=5){
-        auto res = compressed_graph_accuracy(mnist, n, (float)r/100.0);
-        cout << setprecision(10) << (float)r/100.0 << ", " << res.accuracy << ", " << res.time << endl;
-    }
+    // for(int r = 0; r < 80; r+=5){
+    //     auto res = compressed_graph_accuracy(mnist, n, (float)r/100.0);
+    //     cout << setprecision(10) << (float)r/100.0 << ", " << res.accuracy << ", " << res.time << endl;
+    // }
     for(int r = 80; r <= 100; r+=1){
         auto res = compressed_graph_accuracy(mnist, n, (float)r/100.0);
         cout << setprecision(10) << (float)r/100.0 << ", " << res.accuracy << ", " << res.time << endl;
