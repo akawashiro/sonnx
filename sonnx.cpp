@@ -99,9 +99,15 @@ CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_n
 
 void CompressedGemm::calc_partially(const int index, const vector<float> &x){
     int n = B_scale_threads[index].size();
+    float r = 0;
     for(int i=0;i<n;i++){
-        ret[B_row_threads[index][i]] += B_scale_threads[index][i] * x[B_column_threads[index][i]];
+        r += B_scale_threads[index][i] * x[B_column_threads[index][i]];
+        // ret[B_row_threads[index][i]] += B_scale_threads[index][i] * x[B_column_threads[index][i]];
+        if(i<n-1 && B_row_threads[index][i]!=B_row_threads[index][i+1]){
+            ret[B_row_threads[index][i]] += r;
+        }
     }
+    ret[B_row_threads[index][n-1]] += r;
 }
 
 vector<float> CompressedGemm::calc(const vector<float> &x){
@@ -321,7 +327,8 @@ int main(){
     //     auto res = compressed_graph_accuracy(mnist, n, (float)r/100.0);
     //     cout << setprecision(10) << (float)r/100.0 << ", " << res.accuracy << ", " << res.time << endl;
     // }
-    for(int r = 80; r <= 100; r+=1){
+    // for(int r = 80; r <= 100; r+=1){
+    for(int r = 80; r <= 81; r++){
         auto res = compressed_graph_accuracy(mnist, n, (float)r/100.0);
         cout << setprecision(10) << (float)r/100.0 << ", " << res.accuracy << ", " << res.time << endl;
     }
