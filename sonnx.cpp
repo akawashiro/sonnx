@@ -34,6 +34,7 @@ class CompressedGemm : Node{
         vector<vector<float>> B_scale_threads;
         vector<vector<int>> B_row_threads;
         vector<vector<int>> B_column_threads;
+        vector<vector<int>> B_nrows_threads;
 };
 
 CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_name, const float compress_ratio = CompressedGemm::DEFAULT_COMPRESS_RATIO){
@@ -68,16 +69,24 @@ CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_n
     // Devide the matrix B to use in threads
     // int row_size = B.size();
     // int column_size = B[0].size();
-    int cur=0;
+    int cur=0, cur2=0;
     B_row_threads = vector<vector<int>>(n_thread, vector<int>());
     B_column_threads = vector<vector<int>>(n_thread, vector<int>());
     B_scale_threads = vector<vector<float>>(n_thread, vector<float>());
+    B_nrows_threads = vector<vector<int>>(n_thread, vector<int>());
     for(int i=0;i<n_thread;i++){
         while(1){
+            if(cur==B_row.size() || (B_row_threads[i].size() > 0 &&
+                        B_row_threads[i].back() != B_row[cur])){
+                // cout << cur - cur2 << endl;
+                B_nrows_threads[i].push_back(cur-cur2);
+                cur2 = cur;
+            }
             if(cur==B_row.size() || 
                     (B_row_threads[i].size() > B_row.size()/n_thread &&
-                     B_row_threads[i].back() != B_row[cur]))
+                     B_row_threads[i].back() != B_row[cur])){
                 break;
+            }
             B_row_threads[i].push_back(B_row[cur]);
             B_column_threads[i].push_back(B_column[cur]);
             B_scale_threads[i].push_back(B_scale[cur]);
@@ -98,16 +107,48 @@ CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_n
 }
 
 void CompressedGemm::calc_partially(const int index, const vector<float> &x){
-    int n = B_scale_threads[index].size();
-    float r = 0;
-    for(int i=0;i<n;i++){
-        r += B_scale_threads[index][i] * x[B_column_threads[index][i]];
-        // ret[B_row_threads[index][i]] += B_scale_threads[index][i] * x[B_column_threads[index][i]];
-        if(i<n-1 && B_row_threads[index][i]!=B_row_threads[index][i+1]){
-            ret[B_row_threads[index][i]] += r;
+    int m = B_nrows_threads[index].size();
+    int cur = 0;
+    for(int i=0;i<m;i++){
+        int n = B_nrows_threads[index][i];
+        float r = 0;
+        for(int j=cur;j<cur+n;j++){
+            r += B_scale_threads[index][j] * x[B_column_threads[index][j]];
         }
+        ret[B_row_threads[index][cur]] += r;
+        cur += n;
+
+        // Following code is tyial for vectorization
+        // float r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0, r5 = 0, r6 = 0, r7 =0;
+        // int j=cur;
+        // while(j+7 < cur+n){
+        //     r0 += B_scale_threads[index][j] * x[B_column_threads[index][j]];
+        //     r1 += B_scale_threads[index][j+1] * x[B_column_threads[index][j+1]];
+        //     r2 += B_scale_threads[index][j+2] * x[B_column_threads[index][j+2]];
+        //     r3 += B_scale_threads[index][j+3] * x[B_column_threads[index][j+3]];
+        //     r4 += B_scale_threads[index][j+4] * x[B_column_threads[index][j+4]];
+        //     r5 += B_scale_threads[index][j+5] * x[B_column_threads[index][j+5]];
+        //     r6 += B_scale_threads[index][j+6] * x[B_column_threads[index][j+6]];
+        //     r7 += B_scale_threads[index][j+7] * x[B_column_threads[index][j+7]];
+        //     j+=8;
+        // }
+        // for(j;j<cur+n;j++){
+        //     r1 += B_scale_threads[index][j] * x[B_column_threads[index][j]];
+        // }
+        // ret[B_row_threads[index][cur]] += (r0 + r1 + r2 + r3 + r4 + r5 + r6 + r7);
+        // cur += n;
     }
-    ret[B_row_threads[index][n-1]] += r;
+
+    // int n = B_scale_threads[index].size();
+    // float r = 0;
+    // for(int i=0;i<n;i++){
+    //     r += B_scale_threads[index][i] * x[B_column_threads[index][i]];
+    //     if(i<n-1 && B_row_threads[index][i]!=B_row_threads[index][i+1]){
+    //         ret[B_row_threads[index][i]] += r;
+    //         r = 0;
+    //     }
+    // }
+    // ret[B_row_threads[index][n-1]] += r;
 }
 
 vector<float> CompressedGemm::calc(const vector<float> &x){
@@ -120,6 +161,7 @@ vector<float> CompressedGemm::calc(const vector<float> &x){
     for(int i=0;i<n_thread;i++){
         ths[i].join();
     }
+
     // int n = B_scale.size();
     // for(int i=0;i<n;i++){
     //     ret[B_row[i]] += B_scale[i] * x[B_column[i]];
@@ -327,10 +369,10 @@ int main(){
     //     auto res = compressed_graph_accuracy(mnist, n, (float)r/100.0);
     //     cout << setprecision(10) << (float)r/100.0 << ", " << res.accuracy << ", " << res.time << endl;
     // }
-    // for(int r = 80; r <= 100; r+=1){
-    for(int r = 80; r <= 81; r++){
+    for(int r = 80; r <= 100; r+=1){
         auto res = compressed_graph_accuracy(mnist, n, (float)r/100.0);
         cout << setprecision(10) << (float)r/100.0 << ", " << res.accuracy << ", " << res.time << endl;
+        break;
     }
     return 0;
 }
