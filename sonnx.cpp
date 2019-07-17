@@ -8,6 +8,7 @@
 #include <sstream>
 #include <algorithm>
 #include <immintrin.h>
+#include <thread>
 #define ALIGN  32
 
 using namespace std;
@@ -20,12 +21,12 @@ class Node{
 class CompressedGemm : Node{
     public:
         CompressedGemm(const std::string &b_name, const std::string &c_name, const float compress_ratio);
-        void calc_partially(const int index, const vector<float> &x);
+        void calc_partially(const int index, const float *x);
         std::vector<float> calc(const std::vector<float> &x);
         void show();
         constexpr static const float DEFAULT_COMPRESS_RATIO = 0.8;
     private:
-        int n_thread = 1;
+        int n_thread = 3;
         std::vector<std::vector<float> > B;
         std::vector<float> C;
         std::vector<float> ret;
@@ -102,10 +103,7 @@ CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_n
             B_scale_threads[i].push_back(B_scale[cur]);
             cur++;
         }
-        // cout << B_row_threads[i].size() << endl;
     }
-    // cout << "row_size = " << B_row.size() <<endl; 
-    // << " column_size = " << column_size << endl;
 
     ifstream cf(c_name);
     float d;
@@ -116,6 +114,35 @@ CompressedGemm::CompressedGemm(const std::string &b_name, const std::string &c_n
     this->C = vd;
 }
 
+void CompressedGemm::calc_partially(const int index, const float* x_p){
+    int m = B_nrows_threads[index].size();
+    int cur = 0;
+    if(0<index)
+        cur = B_nrows_threads[index-1].back();
+    for(int i=0;i<m;i++){
+        int n = B_nrows_threads[index][i];
+        int n1 = (n-cur)/8*8+cur;
+        float r = 0;
+        __m256 vr = _mm256_setzero_ps();
+        __m256 vs = _mm256_load_ps(&B_scale_p[cur]);
+        // Speed up below code with AVX2.
+        // for(cur;cur<n1;cur++){
+        // r += B_scale_p[cur] * x[B_column_p[cur]];
+        // }
+        for(cur;cur<n1;cur+=8){
+            __m256i vc = _mm256_loadu_si256((__m256i*)(&B_column_p[cur]));
+            __m256 vx = _mm256_i32gather_ps(x_p, vc, 4);
+            vr = _mm256_fmadd_ps(vs, vx, vr);
+        }
+        for(cur;cur<n;cur++){
+            r += B_scale_p[cur] * x_p[B_column_p[cur]];
+        }
+        __attribute__((aligned(32))) float t[8] = {0};
+        _mm256_store_ps(t, vr);
+        ret[B_row_p[cur-1]] += r + t[0] + t[1] + t[2] + t[3] + t[4] + t[5] + t[6] + t[7];
+    }
+}
+
 vector<float> CompressedGemm::calc(const vector<float> &x){
     ret = C;
     float *x_p = (float*)malloc(x.size()*sizeof(float));
@@ -123,31 +150,13 @@ vector<float> CompressedGemm::calc(const vector<float> &x){
         x_p[i] = x[i];
     }
 
-    for(int index=0;index<n_thread;index++){
-        int m = B_nrows_threads[index].size();
-        int cur = 0;
-        if(0<index)
-            cur = B_nrows_threads[index-1].back();
-        for(int i=0;i<m;i++){
-            int n = B_nrows_threads[index][i];
-            int n1 = (n-cur)/8*8+cur;
-            // cout << n << " " << n1 << endl;
-            float r = 0;
-            __m256 vr = _mm256_setzero_ps();
-            for(cur;cur<n1;cur+=8){
-                __m256 vs = _mm256_load_ps(&B_scale_p[cur]);
-                __m256i vc = _mm256_loadu_si256((__m256i*)(&B_column_p[cur]));
-                __m256 vx = _mm256_i32gather_ps(x_p, vc, 4);
-                vr = _mm256_fmadd_ps(vs, vx, vr);
-                // r += B_scale_p[cur] * x[B_column_p[cur]];
-            }
-            for(cur;cur<n;cur++){
-                r += B_scale_p[cur] * x[B_column_p[cur]];
-            }
-            __attribute__((aligned(32))) float t[8] = {0};
-            _mm256_store_ps(t, vr);
-            ret[B_row_p[cur-1]] += r + t[0] + t[1] + t[2] + t[3] + t[4] + t[5] + t[6] + t[7];
-        }
+    vector<thread> ths;
+    
+    for(int i=0;i<n_thread;i++){
+        ths.push_back(thread(&CompressedGemm::calc_partially, this, i, x_p));
+    }
+    for(int i=0;i<n_thread;i++){
+        ths[i].join();
     }
     return ret;
 }
