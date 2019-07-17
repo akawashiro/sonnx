@@ -124,7 +124,6 @@ void CompressedGemm::calc_partially(const int index, const float* x_p){
         int n1 = (n-cur)/8*8+cur;
         float r = 0;
         __m256 vr = _mm256_setzero_ps();
-        __m256 vs = _mm256_load_ps(&B_scale_p[cur]);
         // Speed up below code with AVX2.
         // for(cur;cur<n1;cur++){
         // r += B_scale_p[cur] * x[B_column_p[cur]];
@@ -132,6 +131,7 @@ void CompressedGemm::calc_partially(const int index, const float* x_p){
         for(cur;cur<n1;cur+=8){
             __m256i vc = _mm256_loadu_si256((__m256i*)(&B_column_p[cur]));
             __m256 vx = _mm256_i32gather_ps(x_p, vc, 4);
+            __m256 vs = _mm256_load_ps(&B_scale_p[cur]);
             vr = _mm256_fmadd_ps(vs, vx, vr);
         }
         for(cur;cur<n;cur++){
