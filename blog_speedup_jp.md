@@ -6,19 +6,21 @@
 - 更にSIMD命令を使った高速化を行うことで、
 - シングルスレッドに限れば`onnxruntime`より高速なMNISTの分類が可能になった
 
+## 前回までのあらすじ
+
 この記事は[前回](http://a-kawashiro.hatenablog.com/entry/2019/03/07/201304)の続きです。
-前回ではMNISTを分類する学習済みニューラルネットワークから不要な枝を削除し、軽量化した学習済みモデルを走らせる専用のランタイムを作ってMNIST分類の高速化を試みました。
-今回はSIMD命令とマルチスレッド化でMNIST分類速度の限界に挑みます。
+前回ではMNISTを分類する学習済みニューラルネットワークから不要な枝を削除し、軽量化した学習済みモデルを走らせる専用のランタイム[sonnx](https://github.com/akawashiro/sonnx)を作ってMNIST分類の高速化を試みました。
+今回はSIMD命令とマルチスレッド化による最適化でMNIST分類速度の限界に挑みます。
 
 今回の目標タイムは既存のONNXランタイム[onnxruntime](https://github.com/microsoft/onnxruntime)です。
 この記事の各実行時間の計測は10回行い、その平均と分散を求めました。
-onnxruntimeと前回制作したランタイムの実行時間は、OS: Ubuntu19.04, CPU: Core i7 8th Gen, メモリ: 16GiBの環境下で以下のようになりました。[^1]
+onnxruntimeと最適化無しのsonnxの実行時間は、OS: Ubuntu19.04, CPU: Core i7 8th Gen, メモリ: 16GiBの環境下で以下のようになりました。[^1]
 
 | 手法                          | 消費時間                     |
 |-------------------------------|------------------------------|
 | onnxruntime(シングルスレッド) | 1.259秒 (標準偏差 0.1148秒)  |
 | onnxruntime(マルチスレッド)   | 0.505秒 (標準偏差 0.04249秒) |
-| 俺俺ONNXランタイム            | 6.968秒 (標準偏差 0.08912秒) |
+| sonnx(最適化無し)             | 6.968秒 (標準偏差 0.08912秒) |
 
 [^1]: [前回](http://a-kawashiro.hatenablog.com/entry/2019/03/07/201304)からOSを入れ替えたので数値が違います。
 
@@ -36,7 +38,7 @@ for(int i=0;i<n;i++){
 
 ## SIMDによる高速化
 
-まず、SIMDで高速化してみます。
+まず、sonnxをSIMDで高速化してみます。
 Core i7 8th GenではAVX2命令セットが使えるので256bitの演算を一度に行うことができ、
 今回は32bit浮動小数点数で計算しているので最大8倍の高速化が見込めます。
 
@@ -66,7 +68,7 @@ ret[B_row_p[cur-1]] += r + t[0] + t[1] + t[2] + t[3] + t[4] + t[5] + t[6] + t[7]
 
 | 手法                          | 消費時間                    |
 |-------------------------------|-----------------------------|
-| SIMD                          | 1.121秒(標準偏差 0.02271秒) |
+| sonnx(SIMD)                   | 1.121秒(標準偏差 0.02271秒) |
 | onnxruntime(シングルスレッド) | 1.259秒(標準偏差 0.1148秒)  |
 
 ウェルチのt検定を用いて検定すると[^2]有意水準5%で帰無仮説が棄却され、確かにonnxruntimeより高速に推論できています。
@@ -82,9 +84,40 @@ onnxruntime(シングルスレッド)と大きな差がつかないのはgather�
 スレッド数は手元で最適なものを探索した結果4にしています。
 ソースコードは[ここ](https://github.com/akawashiro/sonnx/blob/multithread/sonnx.cpp)にあります。
 
+```c
+void CompressedGemm::calc_partially(const int index, const vector<float> &x){
+    int m = B_nrows_threads[index].size();
+    int cur = 0;
+    for(int i=0;i<m;i++){
+        int n = B_nrows_threads[index][i];
+        float r = 0;
+        for(int j=cur;j<cur+n;j++){
+            r += B_scale_threads[index][j] * x[B_column_threads[index][j]];
+        }
+        ret[B_row_threads[index][cur]] += r;
+        cur += n;
+    }
+}
+
+vector<float> CompressedGemm::calc(const vector<float> &x){
+    ret = C;
+    vector<thread> ths;
+    
+    for(int i=0;i<n_thread;i++){
+        ths.push_back(thread(&CompressedGemm::calc_partially, this, i, x));
+    }
+    for(int i=0;i<n_thread;i++){
+        ths[i].join();
+    }
+    return ret;
+}
+```
+
+結果はこんな感じです。
+
 | 手法                        | 消費時間                     |
 |-----------------------------|------------------------------|
-| マルチスレッド              | 1.995秒(標準偏差 0.03405秒)  |
+| sonnx(マルチスレッド)       | 1.995秒(標準偏差 0.03405秒)  |
 | onnxruntime(マルチスレッド) | 0.5048秒(標準偏差 0.04249秒) |
 
 完敗です。
@@ -96,7 +129,7 @@ onnxruntime(シングルスレッド)と大きな差がつかないのはgather�
 
 | 手法                        | 消費時間                     |
 |-----------------------------|------------------------------|
-| SIMD+マルチスレッド         | 1.358秒(標準偏差 0.05762秒)  |
+| sonnx(SIMD+マルチスレッド)  | 1.358秒(標準偏差 0.05762秒)  |
 | onnxruntime(マルチスレッド) | 0.5048秒(標準偏差 0.04249秒) |
 
 あまり効果がありませんね...複数コアからの結果をまとめるのに時間がかかっているのかもしれません。
