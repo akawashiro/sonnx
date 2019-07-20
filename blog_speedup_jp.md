@@ -43,7 +43,7 @@ Core i7 8th GenではAVX2命令セットが使えるので256bitの演算を一�
 しかし、元のコードはメモリへの間接参照を２つ(`ret[B_row[i]]`と`x[B_column[i]]`)含んでおりそのままではSIMD化するのが困難です。
 まず`ret[B_row[i]]`への書き込みは同じ`B_row[i]`の値を持つものをまとめて計算し、メモリへの書き込みを一度に行います。
 `x[B_column[i]]`からの読み出しはAVX2のgather命令を使ってSIMD化します。
-完成したコードがこれです。
+完成したコードが[これ](https://github.com/akawashiro/sonnx/blob/avx2/sonnx.cpp)です。
 
 ```c
 float r = 0;
