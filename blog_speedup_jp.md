@@ -4,19 +4,19 @@
 
 - MNISTの分類をする学習済みモデルを軽量化し、
 - 更にSIMD命令を使った高速化を行うことで、
-- シングルスレッドに限れば`onnxruntime`より高速なMNISTの分類が可能になった
+- `onnxruntime`より高速なMNISTの分類が可能になりました
 
 ## 前回までのあらすじ
 
 この記事は[前回](http://a-kawashiro.hatenablog.com/entry/2019/03/07/201304)の続きです。
-前回ではMNISTを分類する学習済みニューラルネットワークから不要な枝を削除し、軽量化した学習済みモデルを走らせる専用のランタイム[sonnx](https://github.com/akawashiro/sonnx)を作ってMNIST分類の高速化を試みました。
+前回はMNISTを分類する学習済みニューラルネットワークから不要な枝を削除し、軽量化した学習済みモデルを走らせる専用のランタイム[sonnx](https://github.com/akawashiro/sonnx)を作ってMNIST分類の高速化を試みました。
 今回はSIMD命令とマルチスレッド化による最適化でMNIST分類速度の限界に挑みます。
 
 今回の目標タイムは既存のONNXランタイム[onnxruntime](https://github.com/microsoft/onnxruntime)です。
 この記事の各実行時間の計測は10回行い、その平均と分散を求めました。
-onnxruntimeと最適化無しのsonnxの実行時間は、OS: Ubuntu19.04, CPU: Core i7 8th Gen, メモリ: 16GiBの環境下で以下のようになりました。[^1]
+onnxruntimeと最適化無しのsonnxの実行時間は、OS: Ubuntu19.04、CPU: Core i7 8th Gen、 メモリ: 16GiB、GPU無しの環境下で以下のようになりました。[^1]
 
-| 手法                          | 消費時間                     |
+| 手法                          | 実行時間                     |
 |-------------------------------|------------------------------|
 | onnxruntime(シングルスレッド) | 1.259秒 (標準偏差 0.1148秒)  |
 | onnxruntime(マルチスレッド)   | 0.505秒 (標準偏差 0.04249秒) |
@@ -66,7 +66,7 @@ ret[B_row_p[cur-1]] += r + t[0] + t[1] + t[2] + t[3] + t[4] + t[5] + t[6] + t[7]
 
 実行時間はこんな感じになりました。
 
-| 手法                          | 消費時間                    |
+| 手法                          | 実行時間                    |
 |-------------------------------|-----------------------------|
 | sonnx(SIMD)                   | 1.121秒(標準偏差 0.02271秒) |
 | onnxruntime(シングルスレッド) | 1.259秒(標準偏差 0.1148秒)  |
@@ -115,7 +115,7 @@ vector<float> CompressedGemm::calc(const vector<float> &x){
 
 結果はこんな感じです。
 
-| 手法                        | 消費時間                     |
+| 手法                        | 実行時間                     |
 |-----------------------------|------------------------------|
 | sonnx(マルチスレッド)       | 1.995秒(標準偏差 0.03405秒)  |
 | onnxruntime(マルチスレッド) | 0.5048秒(標準偏差 0.04249秒) |
@@ -127,7 +127,7 @@ vector<float> CompressedGemm::calc(const vector<float> &x){
 では最後にSIMDとマルチスレッディングを併用してみます。
 ソースコードは[ここ](https://github.com/akawashiro/sonnx/blob/multithread+AVX2/sonnx.cpp)にあります。
 
-| 手法                        | 消費時間                     |
+| 手法                        | 実行時間                     |
 |-----------------------------|------------------------------|
 | sonnx(SIMD+マルチスレッド)  | 1.358秒(標準偏差 0.05762秒)  |
 | onnxruntime(マルチスレッド) | 0.5048秒(標準偏差 0.04249秒) |
@@ -135,5 +135,8 @@ vector<float> CompressedGemm::calc(const vector<float> &x){
 あまり効果がありませんね...複数コアからの結果をまとめるのに時間がかかっているのかもしれません。
 
 ## まとめ
-学習済みのモデルから影響力の小さい要素を削除した上でSIMDとマルチスレッド化を用いて推論の高速化を試みました。
+影響力の小さい要素を削除して学習済みのモデルを軽量化した上でSIMDとマルチスレッド化を用いて推論の高速化を試みました。
 マルチスレッド環境ではonnxruntimeに勝てませんでしたが、シングルスレッドではonnxruntimeより高速に推論できました。
+
+## 参考
+- [実行時間の測定データ](https://github.com/akawashiro/sonnx/blob/multithread%2BAVX2/optimization-result.ods)
