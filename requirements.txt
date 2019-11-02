@@ -30,4 +30,4 @@ termcolor==1.1.0
 tf2onnx==0.3.2
 typing==3.6.6
 typing-extensions==3.7.2
-Werkzeug==0.14.1
+Werkzeug==0.15.3
